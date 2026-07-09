@@ -12,6 +12,7 @@ import os
 import psycopg2
 from psycopg2.extras import RealDictCursor
 import urllib.parse
+import ssl
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -37,35 +38,36 @@ class UserLogin(BaseModel):
     email: str
     password: str
 
-# Database connection - Fixed for Render SSL
+# Database connection - Fixed for Render SSL/TLS
 def get_db_connection():
-    """Get PostgreSQL connection with proper SSL handling"""
+    """Get PostgreSQL connection with proper SSL handling for Render"""
     try:
-        # Try DATABASE_URL first
+        # Use DATABASE_URL from environment
         database_url = os.getenv("DATABASE_URL")
         
         if database_url:
             # Parse the URL
             result = urllib.parse.urlparse(database_url)
             
-            # Connect with SSL mode disabled to fix the error
+            # Connect with SSL/TLS required
             return psycopg2.connect(
                 host=result.hostname,
                 database=result.path[1:],
                 user=result.username,
                 password=result.password,
                 port=result.port or 5432,
-                sslmode='disable'  # Changed from 'require' to 'disable'
+                sslmode='require',
+                sslrootcert=None  # Use default certificate validation
             )
         
-        # Fallback
+        # Fallback to individual env vars
         return psycopg2.connect(
             host=os.getenv("PGHOST", "localhost"),
             database=os.getenv("PGDATABASE", "zurimarket"),
             user=os.getenv("PGUSER", "zuri"),
             password=os.getenv("PGPASSWORD", "zuripass"),
             port=os.getenv("PGPORT", "5432"),
-            sslmode='disable'
+            sslmode='require'
         )
     except Exception as e:
         logger.error(f"Database connection error: {e}")
