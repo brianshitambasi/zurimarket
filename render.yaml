@@ -1,35 +1,10 @@
 services:
   - type: web
-    name: zurimarket-gateway
-    runtime: python
-    plan: starter
-    region: oregon
-    buildCommand: cd backend/services/api-gateway && pip install -r requirements.txt
-    startCommand: cd backend/services/api-gateway && uvicorn app.main:app --host 0.0.0.0 --port 8080
-    envVars:
-      - key: AUTH_SERVICE
-        value: https://zurimarket-auth.onrender.com
-      - key: PRODUCT_SERVICE
-        value: https://zurimarket-product.onrender.com
-      - key: ORDER_SERVICE
-        value: https://zurimarket-order.onrender.com
-      - key: CART_SERVICE
-        value: https://zurimarket-cart.onrender.com
-      - key: PAYMENT_SERVICE
-        value: https://zurimarket-payment.onrender.com
-      - key: NOTIFICATION_SERVICE
-        value: https://zurimarket-notification.onrender.com
-      - key: MPESA_SERVICE
-        value: https://zurimarket-mpesa.onrender.com
-      - key: JWT_SECRET
-        value: KBKBIUH9Y896875657446@#@#LK
-
-  - type: web
     name: zurimarket-auth
     runtime: python
     plan: starter
     region: oregon
-    buildCommand: cd backend/services/auth-service && pip install -r requirements.txt
+    buildCommand: pip install -r requirements.txt
     startCommand: cd backend/services/auth-service && uvicorn app.main_pg_fixed:app --host 0.0.0.0 --port 8000
     envVars:
       - key: DATABASE_URL
@@ -54,13 +29,15 @@ services:
         value: 911139828565233
       - key: CLOUDINARY_API_SECRET
         value: jp0OmzxQF_qg8vdXPpfnnbgBwIs
+      - key: DEBUG
+        value: False
 
   - type: web
     name: zurimarket-product
     runtime: python
     plan: starter
     region: oregon
-    buildCommand: cd backend/services/product-service && pip install -r requirements.txt
+    buildCommand: pip install -r requirements.txt
     startCommand: cd backend/services/product-service && uvicorn app.main_mongo:app --host 0.0.0.0 --port 8001
     envVars:
       - key: MONGODB_URI
@@ -75,13 +52,15 @@ services:
         value: 911139828565233
       - key: CLOUDINARY_API_SECRET
         value: jp0OmzxQF_qg8vdXPpfnnbgBwIs
+      - key: DEBUG
+        value: False
 
   - type: web
     name: zurimarket-order
     runtime: python
     plan: starter
     region: oregon
-    buildCommand: cd backend/services/order-service && pip install -r requirements.txt
+    buildCommand: pip install -r requirements.txt
     startCommand: cd backend/services/order-service && uvicorn app.main_pg:app --host 0.0.0.0 --port 8002
     envVars:
       - key: DATABASE_URL
@@ -96,13 +75,15 @@ services:
         value: mongodb+srv://brianshitambasi270_db_user:YDUJ10m8ZoqN4z1z@cluster0.xd1f1e5.mongodb.net/zurimarket?retryWrites=true&w=majority&appName=Cluster0
       - key: MONGODB_DB
         value: zurimarket
+      - key: DEBUG
+        value: False
 
   - type: web
     name: zurimarket-cart
     runtime: python
     plan: starter
     region: oregon
-    buildCommand: cd backend/services/cart-service && pip install -r requirements.txt
+    buildCommand: pip install -r requirements.txt
     startCommand: cd backend/services/cart-service && uvicorn app.main_mongo:app --host 0.0.0.0 --port 8003
     envVars:
       - key: MONGODB_URI
@@ -111,34 +92,38 @@ services:
         value: mongodb+srv://brianshitambasi270_db_user:YDUJ10m8ZoqN4z1z@cluster0.xd1f1e5.mongodb.net/zurimarket?retryWrites=true&w=majority&appName=Cluster0
       - key: MONGODB_DB
         value: zurimarket
+      - key: DEBUG
+        value: False
 
   - type: web
     name: zurimarket-payment
     runtime: python
     plan: starter
     region: oregon
-    buildCommand: cd backend/services/payment-service && pip install -r requirements.txt
+    buildCommand: pip install -r requirements.txt
     startCommand: cd backend/services/payment-service && uvicorn app.main_pg:app --host 0.0.0.0 --port 8004
     envVars:
       - key: DATABASE_URL
         fromDatabase:
           name: zurimarket-postgres
           property: connectionString
+      - key: JWT_SECRET
+        value: KBKBIUH9Y896875657446@#@#LK
       - key: MONGODB_URI
         value: mongodb+srv://brianshitambasi270_db_user:YDUJ10m8ZoqN4z1z@cluster0.xd1f1e5.mongodb.net/zurimarket?retryWrites=true&w=majority&appName=Cluster0
       - key: MONGODB_URL
         value: mongodb+srv://brianshitambasi270_db_user:YDUJ10m8ZoqN4z1z@cluster0.xd1f1e5.mongodb.net/zurimarket?retryWrites=true&w=majority&appName=Cluster0
       - key: MONGODB_DB
         value: zurimarket
-      - key: JWT_SECRET
-        value: KBKBIUH9Y896875657446@#@#LK
+      - key: DEBUG
+        value: False
 
   - type: web
     name: zurimarket-notification
     runtime: python
     plan: starter
     region: oregon
-    buildCommand: cd backend/services/notification-service && pip install -r requirements.txt
+    buildCommand: pip install -r requirements.txt
     startCommand: cd backend/services/notification-service && uvicorn app.main_mongo:app --host 0.0.0.0 --port 8005
     envVars:
       - key: MONGODB_URI
@@ -147,13 +132,15 @@ services:
         value: mongodb+srv://brianshitambasi270_db_user:YDUJ10m8ZoqN4z1z@cluster0.xd1f1e5.mongodb.net/zurimarket?retryWrites=true&w=majority&appName=Cluster0
       - key: MONGODB_DB
         value: zurimarket
+      - key: DEBUG
+        value: False
 
   - type: web
     name: zurimarket-mpesa
     runtime: python
     plan: starter
     region: oregon
-    buildCommand: cd backend/services/payment-service && pip install -r requirements.txt requests python-dotenv
+    buildCommand: pip install -r requirements.txt requests python-dotenv
     startCommand: cd backend/services/payment-service && uvicorn app.mpesa_real:app --host 0.0.0.0 --port 8007
     envVars:
       - key: MPESA_CONSUMER_KEY
@@ -178,6 +165,35 @@ services:
         value: zurimarket
       - key: JWT_SECRET
         value: KBKBIUH9Y896875657446@#@#LK
+      - key: DEBUG
+        value: False
+
+  - type: web
+    name: zurimarket-gateway
+    runtime: python
+    plan: starter
+    region: oregon
+    buildCommand: pip install -r requirements.txt
+    startCommand: cd backend/services/api-gateway && uvicorn app.main:app --host 0.0.0.0 --port 8080
+    envVars:
+      - key: AUTH_SERVICE
+        value: https://zurimarket-auth.onrender.com
+      - key: PRODUCT_SERVICE
+        value: https://zurimarket-product.onrender.com
+      - key: ORDER_SERVICE
+        value: https://zurimarket-order.onrender.com
+      - key: CART_SERVICE
+        value: https://zurimarket-cart.onrender.com
+      - key: PAYMENT_SERVICE
+        value: https://zurimarket-payment.onrender.com
+      - key: NOTIFICATION_SERVICE
+        value: https://zurimarket-notification.onrender.com
+      - key: MPESA_SERVICE
+        value: https://zurimarket-mpesa.onrender.com
+      - key: JWT_SECRET
+        value: KBKBIUH9Y896875657446@#@#LK
+      - key: DEBUG
+        value: False
 
 databases:
   - name: zurimarket-postgres
