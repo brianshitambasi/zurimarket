@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
-from fastapi import FastAPI, HTTPException, status, Depends, Body
+from fastapi import FastAPI, HTTPException, status, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel
 from datetime import datetime, timedelta
 import uuid
 import bcrypt
@@ -36,14 +36,30 @@ class UserLogin(BaseModel):
     email: str
     password: str
 
-# Database connection
+# Database connection - using environment variables for Render
 def get_db_connection():
+    # Try Render's DATABASE_URL first
+    database_url = os.getenv("DATABASE_URL")
+    if database_url:
+        import re
+        # Parse DATABASE_URL: postgresql://user:pass@host:port/dbname
+        match = re.match(r'postgresql://([^:]+):([^@]+)@([^:]+):(\d+)/(.+)', database_url)
+        if match:
+            return psycopg2.connect(
+                host=match.group(3),
+                database=match.group(5),
+                user=match.group(1),
+                password=match.group(2),
+                port=match.group(4)
+            )
+    
+    # Fallback to individual env vars or defaults
     return psycopg2.connect(
-        host="localhost",
-        database="zurimarket",
-        user="zuri",
-        password="zuripass",
-        port=5432
+        host=os.getenv("PGHOST", "localhost"),
+        database=os.getenv("PGDATABASE", "zurimarket"),
+        user=os.getenv("PGUSER", "zuri"),
+        password=os.getenv("PGPASSWORD", "zuripass"),
+        port=os.getenv("PGPORT", "5432")
     )
 
 # Create tables if they don't exist
@@ -68,15 +84,15 @@ def init_db():
         conn.commit()
         cur.close()
         conn.close()
-        logger.info("✅ PostgreSQL tables created/verified")
+        logger.info("PostgreSQL tables created/verified")
     except Exception as e:
-        logger.error(f"❌ Database error: {e}")
+        logger.error(f"Database error: {e}")
 
 # Initialize database on startup
 init_db()
 
 SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key-change-in-production-2024")
-ALGORITHM = "HS256"
+ALGORITHM = os.getenv("ALGORITHM", "HS256")
 security = HTTPBearer()
 
 def hash_password(password: str) -> str:
@@ -153,8 +169,8 @@ def register(user: UserRegister):
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"❌ Registration error: {e}")
-        raise HTTPException(status_code=500, detail=f"Registration failed: {str(e)}")
+        logger.error(f"Registration error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/auth/login")
 def login(user: UserLogin):
@@ -194,8 +210,8 @@ def login(user: UserLogin):
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"❌ Login error: {e}")
-        raise HTTPException(status_code=500, detail=f"Login failed: {str(e)}")
+        logger.error(f"Login error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/auth/me")
 def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
@@ -224,7 +240,7 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(securit
     except jwt.InvalidTokenError:
         raise HTTPException(status_code=401, detail="Invalid token")
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
     import uvicorn
