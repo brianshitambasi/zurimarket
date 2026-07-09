@@ -11,6 +11,7 @@ import logging
 import os
 import json
 import sqlite3
+import bcrypt
 from motor.motor_asyncio import AsyncIOMotorClient
 
 logging.basicConfig(level=logging.INFO)
@@ -88,6 +89,21 @@ def init_db():
                 updated_at TEXT DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        
+        # ===== CREATE ADMIN USER IF NOT EXISTS =====
+        # Check if admin exists
+        cur.execute("SELECT * FROM users WHERE email = 'admin@zurimarket.com'")
+        if not cur.fetchone():
+            admin_id = str(uuid.uuid4())
+            password = bcrypt.hashpw('Admin123'.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+            cur.execute('''
+                INSERT INTO users (id, email, phone, full_name, hashed_password, role)
+                VALUES (?, ?, ?, ?, ?, ?)
+            ''', (admin_id, 'admin@zurimarket.com', '+254712345679', 'Admin User', password, 'admin'))
+            logger.info("✅ Admin user created automatically!")
+        else:
+            logger.info("✅ Admin user already exists")
+        
         conn.commit()
         cur.close()
         conn.close()
@@ -124,7 +140,6 @@ SECRET_KEY = os.getenv("SECRET_KEY", "KBKBIUH9Y896875657446@#@#LK")
 ALGORITHM = os.getenv("ALGORITHM", "HS256")
 
 def verify_password(password: str, hashed: str) -> bool:
-    import bcrypt
     return bcrypt.checkpw(password.encode('utf-8'), hashed.encode('utf-8'))
 
 def create_access_token(data: dict) -> str:
@@ -189,9 +204,7 @@ async def admin_login(login: AdminLogin):
             logger.warning(f"User is not admin: {login.email}")
             raise HTTPException(status_code=401, detail="Unauthorized")
         
-        # Verify password using bcrypt
-        import bcrypt
-        if not bcrypt.checkpw(login.password.encode('utf-8'), user["hashed_password"].encode('utf-8')):
+        if not verify_password(login.password, user["hashed_password"]):
             raise HTTPException(status_code=401, detail="Invalid credentials")
         
         token = create_access_token({
@@ -224,11 +237,9 @@ async def get_dashboard_metrics(admin: Dict = Depends(get_admin_user)):
         conn = get_db_connection()
         cur = conn.cursor()
         
-        # Get user count
         cur.execute("SELECT COUNT(*) FROM users")
         total_users = cur.fetchone()[0]
         
-        # Get order metrics
         cur.execute("""
             SELECT 
                 COUNT(*) as total_orders,
@@ -240,7 +251,6 @@ async def get_dashboard_metrics(admin: Dict = Depends(get_admin_user)):
         cur.close()
         conn.close()
         
-        # Get product count from MongoDB
         products_count = 0
         if mongo_db:
             try:
@@ -287,6 +297,22 @@ async def get_all_orders(admin: Dict = Depends(get_admin_user)):
         return [dict(order) for order in orders]
     except Exception as e:
         logger.error(f"Get orders error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/admin/products")
+async def get_all_products(admin: Dict = Depends(get_admin_user)):
+    """Get all products (admin only)"""
+    if not mongo_db:
+        raise HTTPException(status_code=503, detail="MongoDB not available")
+    
+    try:
+        cursor = mongo_db.products.find().sort("created_at", -1)
+        products = await cursor.to_list(length=1000)
+        for product in products:
+            product["_id"] = str(product["_id"])
+        return products
+    except Exception as e:
+        logger.error(f"Get products error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
