@@ -29,34 +29,12 @@ SERVICES = {
     "payment": os.getenv("PAYMENT_SERVICE", "https://zurimarket-payment.onrender.com"),
     "notification": os.getenv("NOTIFICATION_SERVICE", "https://zurimarket-notification.onrender.com"),
     "mpesa": os.getenv("MPESA_SERVICE", "https://zurimarket-mpesa.onrender.com"),
+    "admin": os.getenv("ADMIN_SERVICE", "https://zurimarket-admin.onrender.com"),
 }
-
-# Rate limiting
-rate_limits = {}
-
-def check_rate_limit(client_ip: str, limit: int = 100, window: int = 60):
-    key = f"{client_ip}:{window}"
-    now = datetime.utcnow().timestamp()
-    
-    if key not in rate_limits:
-        rate_limits[key] = []
-    
-    rate_limits[key] = [t for t in rate_limits[key] if t > now - window]
-    
-    if len(rate_limits[key]) >= limit:
-        return False
-    
-    rate_limits[key].append(now)
-    return True
 
 @app.get("/")
 def root():
-    return {
-        "service": "ZuriMarket API Gateway",
-        "version": "1.0.0",
-        "status": "running",
-        "services": SERVICES
-    }
+    return {"service": "ZuriMarket API Gateway", "services": list(SERVICES.keys())}
 
 @app.get("/health")
 def health():
@@ -64,14 +42,6 @@ def health():
 
 @app.api_route("/{service_name}/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
 async def proxy(request: Request, service_name: str, path: str):
-    # Check rate limit
-    client_ip = request.client.host if request.client else "unknown"
-    if not check_rate_limit(client_ip):
-        return JSONResponse(
-            status_code=429,
-            content={"error": "Rate limit exceeded. Please try again later."}
-        )
-    
     if service_name not in SERVICES:
         return JSONResponse(
             status_code=404,
@@ -82,27 +52,23 @@ async def proxy(request: Request, service_name: str, path: str):
     target_url = f"{service_url}/{path}"
     
     try:
-        body = None
-        if request.method in ["POST", "PUT", "PATCH"]:
-            body = await request.body()
+        body = await request.body() if request.method in ["POST", "PUT", "PATCH"] else None
         
         headers = dict(request.headers)
         headers.pop("host", None)
         headers.pop("content-length", None)
         
-        # Make request using requests
         response = requests.request(
             method=request.method,
             url=target_url,
             headers=headers,
-            data=body if body else None,
+            data=body,
             params=dict(request.query_params),
             timeout=30
         )
         
-        logger.info(f"OK {request.method} /{service_name}/{path} -> {response.status_code}")
+        logger.info(f"OK {request.method} {target_url} -> {response.status_code}")
         
-        # Return response
         try:
             return JSONResponse(
                 status_code=response.status_code,
@@ -115,17 +81,9 @@ async def proxy(request: Request, service_name: str, path: str):
             )
         
     except requests.exceptions.Timeout:
-        logger.error(f"Timeout: {service_name}/{path}")
-        return JSONResponse(
-            status_code=504,
-            content={"error": "Service timeout"}
-        )
+        return JSONResponse(status_code=504, content={"error": "Service timeout"})
     except Exception as e:
-        logger.error(f"Error: {e}")
-        return JSONResponse(
-            status_code=500,
-            content={"error": str(e)}
-        )
+        return JSONResponse(status_code=500, content={"error": str(e)})
 
 if __name__ == "__main__":
     import uvicorn
