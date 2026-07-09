@@ -20,15 +20,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Service URLs - INCLUDING MPESA
+# Service URLs
 SERVICES = {
-    "auth": "http://localhost:8000",
-    "product": "http://localhost:8001",
-    "order": "http://localhost:8002",
-    "cart": "http://localhost:8003",
-    "payment": "http://localhost:8004",
-    "notification": "http://localhost:8005",
-    "mpesa": "http://localhost:8006",  # Added M-PESA service
+    "auth": os.getenv("AUTH_SERVICE", "https://zurimarket-auth.onrender.com"),
+    "product": os.getenv("PRODUCT_SERVICE", "https://zurimarket-product.onrender.com"),
+    "order": os.getenv("ORDER_SERVICE", "https://zurimarket-order.onrender.com"),
+    "cart": os.getenv("CART_SERVICE", "https://zurimarket-cart.onrender.com"),
+    "payment": os.getenv("PAYMENT_SERVICE", "https://zurimarket-payment.onrender.com"),
+    "notification": os.getenv("NOTIFICATION_SERVICE", "https://zurimarket-notification.onrender.com"),
+    "mpesa": os.getenv("MPESA_SERVICE", "https://zurimarket-mpesa.onrender.com"),
 }
 
 # Rate limiting
@@ -102,10 +102,17 @@ async def proxy(request: Request, service_name: str, path: str):
         
         logger.info(f"OK {request.method} /{service_name}/{path} -> {response.status_code}")
         
-        return JSONResponse(
-            status_code=response.status_code,
-            content=response.json() if response.headers.get("content-type", "").startswith("application/json") else {"message": response.text[:100]}
-        )
+        # Return response
+        try:
+            return JSONResponse(
+                status_code=response.status_code,
+                content=response.json() if response.headers.get("content-type", "").startswith("application/json") else {"message": response.text[:100]}
+            )
+        except:
+            return JSONResponse(
+                status_code=response.status_code,
+                content={"message": response.text[:100]}
+            )
         
     except requests.exceptions.Timeout:
         logger.error(f"Timeout: {service_name}/{path}")
