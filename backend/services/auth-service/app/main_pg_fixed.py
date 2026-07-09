@@ -9,15 +9,13 @@ import bcrypt
 import jwt
 import logging
 import os
-import psycopg2
-from psycopg2.extras import RealDictCursor
-import urllib.parse
-import ssl
+import sqlite3
+import json
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="ZuriMarket Auth Service (PostgreSQL)", version="2.0.0")
+app = FastAPI(title="ZuriMarket Auth Service (SQLite)", version="2.0.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -27,7 +25,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Models
 class UserRegister(BaseModel):
     email: str
     phone: str
@@ -38,68 +35,37 @@ class UserLogin(BaseModel):
     email: str
     password: str
 
-# Database connection - Fixed for Render SSL/TLS
+# SQLite Database
 def get_db_connection():
-    """Get PostgreSQL connection with proper SSL handling for Render"""
-    try:
-        # Use DATABASE_URL from environment
-        database_url = os.getenv("DATABASE_URL")
-        
-        if database_url:
-            # Parse the URL
-            result = urllib.parse.urlparse(database_url)
-            
-            # Connect with SSL/TLS required
-            return psycopg2.connect(
-                host=result.hostname,
-                database=result.path[1:],
-                user=result.username,
-                password=result.password,
-                port=result.port or 5432,
-                sslmode='require',
-                sslrootcert=None  # Use default certificate validation
-            )
-        
-        # Fallback to individual env vars
-        return psycopg2.connect(
-            host=os.getenv("PGHOST", "localhost"),
-            database=os.getenv("PGDATABASE", "zurimarket"),
-            user=os.getenv("PGUSER", "zuri"),
-            password=os.getenv("PGPASSWORD", "zuripass"),
-            port=os.getenv("PGPORT", "5432"),
-            sslmode='require'
-        )
-    except Exception as e:
-        logger.error(f"Database connection error: {e}")
-        raise
+    conn = sqlite3.connect('zurimarket.db')
+    conn.row_factory = sqlite3.Row
+    return conn
 
-# Create tables
 def init_db():
     try:
         conn = get_db_connection()
         cur = conn.cursor()
         cur.execute("""
             CREATE TABLE IF NOT EXISTS users (
-                id VARCHAR(36) PRIMARY KEY,
-                email VARCHAR(255) UNIQUE NOT NULL,
-                phone VARCHAR(20) UNIQUE NOT NULL,
-                full_name VARCHAR(255) NOT NULL,
-                hashed_password VARCHAR(255) NOT NULL,
-                role VARCHAR(50) DEFAULT 'customer',
-                is_verified BOOLEAN DEFAULT FALSE,
-                is_active BOOLEAN DEFAULT TRUE,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                id TEXT PRIMARY KEY,
+                email TEXT UNIQUE NOT NULL,
+                phone TEXT UNIQUE NOT NULL,
+                full_name TEXT NOT NULL,
+                hashed_password TEXT NOT NULL,
+                role TEXT DEFAULT 'customer',
+                is_verified INTEGER DEFAULT 0,
+                is_active INTEGER DEFAULT 1,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
             )
         """)
         conn.commit()
         cur.close()
         conn.close()
-        logger.info("PostgreSQL tables created/verified")
+        logger.info("SQLite tables created/verified")
     except Exception as e:
         logger.error(f"Database init error: {e}")
 
-# Initialize database
 init_db()
 
 SECRET_KEY = os.getenv("SECRET_KEY", "KBKBIUH9Y896875657446@#@#LK")
@@ -120,14 +86,14 @@ def create_access_token(data: dict) -> str:
 
 @app.get("/")
 def root():
-    return {"service": "Auth Service", "database": "postgresql", "status": "running"}
+    return {"service": "Auth Service", "database": "sqlite", "status": "running"}
 
 @app.get("/health")
 def health():
     return {
         "status": "healthy",
         "service": "auth-service",
-        "database": "postgresql",
+        "database": "sqlite",
         "timestamp": datetime.utcnow().isoformat()
     }
 
@@ -137,9 +103,10 @@ def register(user: UserRegister):
     
     try:
         conn = get_db_connection()
-        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur = conn.cursor()
         
-        cur.execute("SELECT * FROM users WHERE email = %s", (user.email,))
+        # Check if user exists
+        cur.execute("SELECT * FROM users WHERE email = ?", (user.email,))
         existing = cur.fetchone()
         if existing:
             cur.close()
@@ -151,11 +118,9 @@ def register(user: UserRegister):
         
         cur.execute("""
             INSERT INTO users (id, email, phone, full_name, hashed_password)
-            VALUES (%s, %s, %s, %s, %s)
-            RETURNING id, email, phone, full_name, role, created_at
+            VALUES (?, ?, ?, ?, ?)
         """, (user_id, user.email, user.phone, user.full_name, hashed))
         
-        db_user = cur.fetchone()
         conn.commit()
         cur.close()
         conn.close()
@@ -166,12 +131,12 @@ def register(user: UserRegister):
             "access_token": token,
             "token_type": "bearer",
             "user": {
-                "id": db_user["id"],
-                "email": db_user["email"],
-                "phone": db_user["phone"],
-                "full_name": db_user["full_name"],
-                "role": db_user["role"],
-                "created_at": db_user["created_at"].isoformat() if db_user["created_at"] else None
+                "id": user_id,
+                "email": user.email,
+                "phone": user.phone,
+                "full_name": user.full_name,
+                "role": "customer",
+                "created_at": datetime.utcnow().isoformat()
             }
         }
     except HTTPException:
@@ -186,9 +151,9 @@ def login(user: UserLogin):
     
     try:
         conn = get_db_connection()
-        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur = conn.cursor()
         
-        cur.execute("SELECT * FROM users WHERE email = %s", (user.email,))
+        cur.execute("SELECT * FROM users WHERE email = ?", (user.email,))
         db_user = cur.fetchone()
         cur.close()
         conn.close()
@@ -210,7 +175,7 @@ def login(user: UserLogin):
                 "phone": db_user["phone"],
                 "full_name": db_user["full_name"],
                 "role": db_user["role"],
-                "created_at": db_user["created_at"].isoformat() if db_user["created_at"] else None
+                "created_at": db_user["created_at"] or datetime.utcnow().isoformat()
             }
         }
     except HTTPException:
@@ -227,8 +192,8 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(securit
         user_id = payload.get("sub")
         
         conn = get_db_connection()
-        cur = conn.cursor(cursor_factory=RealDictCursor)
-        cur.execute("SELECT id, email, phone, full_name, role FROM users WHERE id = %s", (user_id,))
+        cur = conn.cursor()
+        cur.execute("SELECT id, email, phone, full_name, role FROM users WHERE id = ?", (user_id,))
         user = cur.fetchone()
         cur.close()
         conn.close()
