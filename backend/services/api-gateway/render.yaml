@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: zurimarket-gateway
+    runtime: python
+    plan: starter
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port 8080
+    envVars:
+      - key: AUTH_SERVICE
+        value: https://zurimarket-auth.onrender.com
+      - key: PRODUCT_SERVICE
+        value: https://zurimarket-product.onrender.com
+      - key: ORDER_SERVICE
+        value: https://zurimarket-order.onrender.com
+      - key: CART_SERVICE
+        value: https://zurimarket-cart.onrender.com
+      - key: PAYMENT_SERVICE
+        value: https://zurimarket-payment.onrender.com
+      - key: NOTIFICATION_SERVICE
+        value: https://zurimarket-notification.onrender.com
+      - key: MPESA_SERVICE
+        value: https://zurimarket-mpesa.onrender.com
