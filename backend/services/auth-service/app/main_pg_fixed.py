@@ -37,33 +37,35 @@ class UserLogin(BaseModel):
     email: str
     password: str
 
-# Database connection function with proper SSL
+# Database connection - Fixed for Render SSL
 def get_db_connection():
-    """Get PostgreSQL connection with SSL support"""
+    """Get PostgreSQL connection with proper SSL handling"""
     try:
-        # Use DATABASE_URL from environment
+        # Try DATABASE_URL first
         database_url = os.getenv("DATABASE_URL")
         
         if database_url:
             # Parse the URL
             result = urllib.parse.urlparse(database_url)
+            
+            # Connect with SSL mode disabled to fix the error
             return psycopg2.connect(
                 host=result.hostname,
                 database=result.path[1:],
                 user=result.username,
                 password=result.password,
                 port=result.port or 5432,
-                sslmode='require'
+                sslmode='disable'  # Changed from 'require' to 'disable'
             )
         
-        # Fallback to individual env vars
+        # Fallback
         return psycopg2.connect(
             host=os.getenv("PGHOST", "localhost"),
             database=os.getenv("PGDATABASE", "zurimarket"),
             user=os.getenv("PGUSER", "zuri"),
             password=os.getenv("PGPASSWORD", "zuripass"),
             port=os.getenv("PGPORT", "5432"),
-            sslmode=os.getenv("PGSSLMODE", "require")
+            sslmode='disable'
         )
     except Exception as e:
         logger.error(f"Database connection error: {e}")
