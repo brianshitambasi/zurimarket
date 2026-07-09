@@ -11,6 +11,7 @@ import logging
 import os
 import psycopg2
 from psycopg2.extras import RealDictCursor
+import urllib.parse
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -36,33 +37,39 @@ class UserLogin(BaseModel):
     email: str
     password: str
 
-# Database connection - using environment variables for Render
+# Database connection function with proper SSL
 def get_db_connection():
-    # Try Render's DATABASE_URL first
-    database_url = os.getenv("DATABASE_URL")
-    if database_url:
-        import re
-        # Parse DATABASE_URL: postgresql://user:pass@host:port/dbname
-        match = re.match(r'postgresql://([^:]+):([^@]+)@([^:]+):(\d+)/(.+)', database_url)
-        if match:
+    """Get PostgreSQL connection with SSL support"""
+    try:
+        # Use DATABASE_URL from environment
+        database_url = os.getenv("DATABASE_URL")
+        
+        if database_url:
+            # Parse the URL
+            result = urllib.parse.urlparse(database_url)
             return psycopg2.connect(
-                host=match.group(3),
-                database=match.group(5),
-                user=match.group(1),
-                password=match.group(2),
-                port=match.group(4)
+                host=result.hostname,
+                database=result.path[1:],
+                user=result.username,
+                password=result.password,
+                port=result.port or 5432,
+                sslmode='require'
             )
-    
-    # Fallback to individual env vars or defaults
-    return psycopg2.connect(
-        host=os.getenv("PGHOST", "localhost"),
-        database=os.getenv("PGDATABASE", "zurimarket"),
-        user=os.getenv("PGUSER", "zuri"),
-        password=os.getenv("PGPASSWORD", "zuripass"),
-        port=os.getenv("PGPORT", "5432")
-    )
+        
+        # Fallback to individual env vars
+        return psycopg2.connect(
+            host=os.getenv("PGHOST", "localhost"),
+            database=os.getenv("PGDATABASE", "zurimarket"),
+            user=os.getenv("PGUSER", "zuri"),
+            password=os.getenv("PGPASSWORD", "zuripass"),
+            port=os.getenv("PGPORT", "5432"),
+            sslmode=os.getenv("PGSSLMODE", "require")
+        )
+    except Exception as e:
+        logger.error(f"Database connection error: {e}")
+        raise
 
-# Create tables if they don't exist
+# Create tables
 def init_db():
     try:
         conn = get_db_connection()
@@ -86,12 +93,12 @@ def init_db():
         conn.close()
         logger.info("PostgreSQL tables created/verified")
     except Exception as e:
-        logger.error(f"Database error: {e}")
+        logger.error(f"Database init error: {e}")
 
-# Initialize database on startup
+# Initialize database
 init_db()
 
-SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key-change-in-production-2024")
+SECRET_KEY = os.getenv("SECRET_KEY", "KBKBIUH9Y896875657446@#@#LK")
 ALGORITHM = os.getenv("ALGORITHM", "HS256")
 security = HTTPBearer()
 
@@ -128,7 +135,6 @@ def register(user: UserRegister):
         conn = get_db_connection()
         cur = conn.cursor(cursor_factory=RealDictCursor)
         
-        # Check if user exists
         cur.execute("SELECT * FROM users WHERE email = %s", (user.email,))
         existing = cur.fetchone()
         if existing:
@@ -136,7 +142,6 @@ def register(user: UserRegister):
             conn.close()
             raise HTTPException(status_code=400, detail="Email already registered")
         
-        # Create user
         user_id = str(uuid.uuid4())
         hashed = hash_password(user.password)
         
@@ -151,7 +156,6 @@ def register(user: UserRegister):
         cur.close()
         conn.close()
         
-        # Generate token
         token = create_access_token({"sub": user_id, "email": user.email, "role": "customer"})
         
         return {
@@ -180,7 +184,6 @@ def login(user: UserLogin):
         conn = get_db_connection()
         cur = conn.cursor(cursor_factory=RealDictCursor)
         
-        # Find user
         cur.execute("SELECT * FROM users WHERE email = %s", (user.email,))
         db_user = cur.fetchone()
         cur.close()
@@ -192,7 +195,6 @@ def login(user: UserLogin):
         if not verify_password(user.password, db_user["hashed_password"]):
             raise HTTPException(status_code=401, detail="Invalid credentials")
         
-        # Generate token
         token = create_access_token({"sub": db_user["id"], "email": user.email, "role": db_user["role"]})
         
         return {
