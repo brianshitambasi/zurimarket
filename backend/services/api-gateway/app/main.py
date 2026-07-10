@@ -32,7 +32,11 @@ ADMIN_URL = os.getenv("ADMIN_SERVICE", "https://zurimarket-admin.onrender.com")
 
 @app.get("/")
 def root():
-    return {"service": "ZuriMarket API Gateway", "status": "running"}
+    return {
+        "service": "ZuriMarket API Gateway",
+        "status": "running",
+        "auth_url": AUTH_URL
+    }
 
 @app.get("/health")
 def health():
@@ -40,29 +44,50 @@ def health():
 
 @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
 async def catch_all(request: Request, path: str):
-    """Catch all requests and route to appropriate service"""
+    # Remove trailing slash if present
+    if path.endswith('/'):
+        path = path[:-1]
     
-    # Determine which service to route to based on path prefix
+    # Determine service
     if path.startswith("auth/"):
-        target_url = f"{AUTH_URL}/{path}"
+        service_url = AUTH_URL
+        remaining_path = path[5:]  # Remove "auth/"
+        target_url = f"{service_url}/{remaining_path}"
     elif path.startswith("product/"):
-        target_url = f"{PRODUCT_URL}/{path}"
+        service_url = PRODUCT_URL
+        remaining_path = path[8:]
+        target_url = f"{service_url}/{remaining_path}"
     elif path.startswith("order/"):
-        target_url = f"{ORDER_URL}/{path}"
+        service_url = ORDER_URL
+        remaining_path = path[6:]
+        target_url = f"{service_url}/{remaining_path}"
     elif path.startswith("cart/"):
-        target_url = f"{CART_URL}/{path}"
+        service_url = CART_URL
+        remaining_path = path[5:]
+        target_url = f"{service_url}/{remaining_path}"
     elif path.startswith("payment/"):
-        target_url = f"{PAYMENT_URL}/{path}"
+        service_url = PAYMENT_URL
+        remaining_path = path[8:]
+        target_url = f"{service_url}/{remaining_path}"
     elif path.startswith("notification/"):
-        target_url = f"{NOTIFICATION_URL}/{path}"
+        service_url = NOTIFICATION_URL
+        remaining_path = path[13:]
+        target_url = f"{service_url}/{remaining_path}"
     elif path.startswith("mpesa/"):
-        target_url = f"{MPESA_URL}/{path}"
+        service_url = MPESA_URL
+        remaining_path = path[6:]
+        target_url = f"{service_url}/{remaining_path}"
     elif path.startswith("admin/"):
-        target_url = f"{ADMIN_URL}/{path}"
+        service_url = ADMIN_URL
+        remaining_path = path[6:]
+        target_url = f"{service_url}/{remaining_path}"
     else:
-        return JSONResponse(status_code=404, content={"error": f"Unknown path: {path}"})
+        return JSONResponse(status_code=404, content={
+            "error": f"Unknown path: {path}",
+            "available": ["auth", "product", "order", "cart", "payment", "notification", "mpesa", "admin"]
+        })
     
-    logger.info(f"Proxying: {request.method} {target_url}")
+    logger.info(f"Proxy: {request.method} {target_url}")
     
     try:
         body = await request.body() if request.method in ["POST", "PUT", "PATCH"] else None
@@ -98,4 +123,3 @@ async def catch_all(request: Request, path: str):
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8080)
-# Force redeploy Fri, Jul 10, 2026  7:54:25 PM
