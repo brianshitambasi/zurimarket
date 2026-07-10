@@ -2,7 +2,7 @@
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-import requests
+import httpx
 import logging
 import os
 from datetime import datetime
@@ -20,104 +20,71 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Service URLs
-AUTH_URL = os.getenv("AUTH_SERVICE", "https://zurimarket-auth.onrender.com")
-PRODUCT_URL = os.getenv("PRODUCT_SERVICE", "https://zurimarket-product.onrender.com")
-ORDER_URL = os.getenv("ORDER_SERVICE", "https://zurimarket-order.onrender.com")
-CART_URL = os.getenv("CART_SERVICE", "https://zurimarket-cart.onrender.com")
-PAYMENT_URL = os.getenv("PAYMENT_SERVICE", "https://zurimarket-payment.onrender.com")
-NOTIFICATION_URL = os.getenv("NOTIFICATION_SERVICE", "https://zurimarket-notification.onrender.com")
-MPESA_URL = os.getenv("MPESA_SERVICE", "https://zurimarket-mpesa.onrender.com")
-ADMIN_URL = os.getenv("ADMIN_SERVICE", "https://zurimarket-admin.onrender.com")
+# Service URLs - READ FROM ENVIRONMENT
+SERVICES = {
+    "auth": os.getenv("AUTH_SERVICE", "https://zurimarket-auth.onrender.com"),
+    "product": os.getenv("PRODUCT_SERVICE", "https://zurimarket-product.onrender.com"),
+    "order": os.getenv("ORDER_SERVICE", "https://zurimarket-order.onrender.com"),
+    "cart": os.getenv("CART_SERVICE", "https://zurimarket-cart.onrender.com"),
+    "payment": os.getenv("PAYMENT_SERVICE", "https://zurimarket-payment.onrender.com"),
+    "notification": os.getenv("NOTIFICATION_SERVICE", "https://zurimarket-notification.onrender.com"),
+    "mpesa": os.getenv("MPESA_SERVICE", "https://zurimarket-mpesa.onrender.com"),
+    "admin": os.getenv("ADMIN_SERVICE", "https://zurimarket-admin.onrender.com"),
+}
 
 @app.get("/")
-def root():
+async def root():
     return {
-        "service": "ZuriMarket API Gateway",
+        "service": "ZuriMarket API Gateway", 
+        "version": "1.0.0",
         "status": "running",
-        "auth_url": AUTH_URL
+        "endpoints": list(SERVICES.keys())
     }
 
 @app.get("/health")
-def health():
-    return {"status": "healthy", "service": "api-gateway", "timestamp": datetime.utcnow().isoformat()}
+async def health():
+    return {"status": "healthy", "service": "gateway", "timestamp": datetime.utcnow().isoformat()}
 
 @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
-async def catch_all(request: Request, path: str):
-    # Remove trailing slash if present
-    if path.endswith('/'):
-        path = path[:-1]
+async def proxy(request: Request, path: str):
+    # Parse service from path: service/rest/of/path
+    parts = path.split("/", 1)
+    service_name = parts[0]
+    remaining_path = parts[1] if len(parts) > 1 else ""
     
-    # Determine service
-    if path.startswith("auth/"):
-        service_url = AUTH_URL
-        remaining_path = path[5:]  # Remove "auth/"
-        target_url = f"{service_url}/{remaining_path}"
-    elif path.startswith("product/"):
-        service_url = PRODUCT_URL
-        remaining_path = path[8:]
-        target_url = f"{service_url}/{remaining_path}"
-    elif path.startswith("order/"):
-        service_url = ORDER_URL
-        remaining_path = path[6:]
-        target_url = f"{service_url}/{remaining_path}"
-    elif path.startswith("cart/"):
-        service_url = CART_URL
-        remaining_path = path[5:]
-        target_url = f"{service_url}/{remaining_path}"
-    elif path.startswith("payment/"):
-        service_url = PAYMENT_URL
-        remaining_path = path[8:]
-        target_url = f"{service_url}/{remaining_path}"
-    elif path.startswith("notification/"):
-        service_url = NOTIFICATION_URL
-        remaining_path = path[13:]
-        target_url = f"{service_url}/{remaining_path}"
-    elif path.startswith("mpesa/"):
-        service_url = MPESA_URL
-        remaining_path = path[6:]
-        target_url = f"{service_url}/{remaining_path}"
-    elif path.startswith("admin/"):
-        service_url = ADMIN_URL
-        remaining_path = path[6:]
-        target_url = f"{service_url}/{remaining_path}"
-    else:
-        return JSONResponse(status_code=404, content={
-            "error": f"Unknown path: {path}",
-            "available": ["auth", "product", "order", "cart", "payment", "notification", "mpesa", "admin"]
-        })
+    if service_name not in SERVICES:
+        return JSONResponse(
+            status_code=404,
+            content={"error": f"Service '{service_name}' not found", "available": list(SERVICES.keys())}
+        )
     
-    logger.info(f"Proxy: {request.method} {target_url}")
+    target_url = f"{SERVICES[service_name]}/{remaining_path}"
+    logger.info(f"➡️  {request.method} {target_url}")
     
     try:
         body = await request.body() if request.method in ["POST", "PUT", "PATCH"] else None
+        headers = {k: v for k, v in request.headers.items() if k.lower() not in ["host", "content-length"]}
         
-        headers = dict(request.headers)
-        headers.pop("host", None)
-        headers.pop("content-length", None)
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.request(
+                method=request.method,
+                url=target_url,
+                headers=headers,
+                content=body,
+                params=request.query_params
+            )
         
-        response = requests.request(
-            method=request.method,
-            url=target_url,
-            headers=headers,
-            data=body,
-            params=dict(request.query_params),
-            timeout=30
-        )
+        logger.info(f"✅ {response.status_code}")
         
         try:
-            return JSONResponse(
-                status_code=response.status_code,
-                content=response.json() if response.headers.get("content-type", "").startswith("application/json") else {"message": response.text[:100]}
-            )
+            return JSONResponse(status_code=response.status_code, content=response.json())
         except:
-            return JSONResponse(
-                status_code=response.status_code,
-                content={"message": response.text[:100]}
-            )
-        
+            return JSONResponse(status_code=response.status_code, content={"message": response.text[:500]})
+            
+    except httpx.TimeoutException:
+        return JSONResponse(status_code=504, content={"error": "Service timeout"})
     except Exception as e:
-        logger.error(f"Proxy error: {e}")
+        logger.error(f"❌ {e}")
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 if __name__ == "__main__":
