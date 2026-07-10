@@ -2,7 +2,7 @@
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-import httpx
+import requests
 import logging
 import os
 from datetime import datetime
@@ -21,76 +21,48 @@ app.add_middleware(
 )
 
 # Service URLs
-AUTH_SERVICE = os.getenv("AUTH_SERVICE", "https://zurimarket-auth.onrender.com")
+AUTH_URL = os.getenv("AUTH_SERVICE", "https://zurimarket-auth.onrender.com")
+PRODUCT_URL = os.getenv("PRODUCT_SERVICE", "https://zurimarket-product.onrender.com")
+ORDER_URL = os.getenv("ORDER_SERVICE", "https://zurimarket-order.onrender.com")
+CART_URL = os.getenv("CART_SERVICE", "https://zurimarket-cart.onrender.com")
+PAYMENT_URL = os.getenv("PAYMENT_SERVICE", "https://zurimarket-payment.onrender.com")
+NOTIFICATION_URL = os.getenv("NOTIFICATION_SERVICE", "https://zurimarket-notification.onrender.com")
+MPESA_URL = os.getenv("MPESA_SERVICE", "https://zurimarket-mpesa.onrender.com")
+ADMIN_URL = os.getenv("ADMIN_SERVICE", "https://zurimarket-admin.onrender.com")
 
 @app.get("/")
 def root():
     return {"service": "ZuriMarket API Gateway", "status": "running"}
 
 @app.get("/health")
-async def health():
+def health():
     return {"status": "healthy", "service": "api-gateway", "timestamp": datetime.utcnow().isoformat()}
 
-# Direct routing for auth
-@app.post("/auth/api/auth/register")
-async def auth_register(request: Request):
-    try:
-        body = await request.body()
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                f"{AUTH_SERVICE}/api/auth/register",
-                content=body,
-                headers={"Content-Type": "application/json"}
-            )
-        return JSONResponse(status_code=response.status_code, content=response.json())
-    except Exception as e:
-        return JSONResponse(status_code=500, content={"error": str(e)})
-
-@app.post("/auth/api/auth/login")
-async def auth_login(request: Request):
-    try:
-        body = await request.body()
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                f"{AUTH_SERVICE}/api/auth/login",
-                content=body,
-                headers={"Content-Type": "application/json"}
-            )
-        return JSONResponse(status_code=response.status_code, content=response.json())
-    except Exception as e:
-        return JSONResponse(status_code=500, content={"error": str(e)})
-
-@app.get("/auth/api/auth/me")
-async def auth_me(request: Request):
-    try:
-        headers = dict(request.headers)
-        headers.pop("host", None)
-        async with httpx.AsyncClient() as client:
-            response = await client.get(
-                f"{AUTH_SERVICE}/api/auth/me",
-                headers=headers
-            )
-        return JSONResponse(status_code=response.status_code, content=response.json())
-    except Exception as e:
-        return JSONResponse(status_code=500, content={"error": str(e)})
-
-# Proxy for all other services
-@app.api_route("/{service_name}/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
-async def proxy(request: Request, service_name: str, path: str):
-    service_url = {
-        "product": os.getenv("PRODUCT_SERVICE", "https://zurimarket-product.onrender.com"),
-        "order": os.getenv("ORDER_SERVICE", "https://zurimarket-order.onrender.com"),
-        "cart": os.getenv("CART_SERVICE", "https://zurimarket-cart.onrender.com"),
-        "payment": os.getenv("PAYMENT_SERVICE", "https://zurimarket-payment.onrender.com"),
-        "notification": os.getenv("NOTIFICATION_SERVICE", "https://zurimarket-notification.onrender.com"),
-        "mpesa": os.getenv("MPESA_SERVICE", "https://zurimarket-mpesa.onrender.com"),
-        "admin": os.getenv("ADMIN_SERVICE", "https://zurimarket-admin.onrender.com"),
-    }.get(service_name)
+@app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
+async def catch_all(request: Request, path: str):
+    """Catch all requests and route to appropriate service"""
     
-    if not service_url:
-        return JSONResponse(status_code=404, content={"error": f"Service '{service_name}' not found"})
+    # Determine which service to route to based on path prefix
+    if path.startswith("auth/"):
+        target_url = f"{AUTH_URL}/{path}"
+    elif path.startswith("product/"):
+        target_url = f"{PRODUCT_URL}/{path}"
+    elif path.startswith("order/"):
+        target_url = f"{ORDER_URL}/{path}"
+    elif path.startswith("cart/"):
+        target_url = f"{CART_URL}/{path}"
+    elif path.startswith("payment/"):
+        target_url = f"{PAYMENT_URL}/{path}"
+    elif path.startswith("notification/"):
+        target_url = f"{NOTIFICATION_URL}/{path}"
+    elif path.startswith("mpesa/"):
+        target_url = f"{MPESA_URL}/{path}"
+    elif path.startswith("admin/"):
+        target_url = f"{ADMIN_URL}/{path}"
+    else:
+        return JSONResponse(status_code=404, content={"error": f"Unknown path: {path}"})
     
-    target_url = f"{service_url}/{path}"
+    logger.info(f"Proxying: {request.method} {target_url}")
     
     try:
         body = await request.body() if request.method in ["POST", "PUT", "PATCH"] else None
@@ -99,21 +71,28 @@ async def proxy(request: Request, service_name: str, path: str):
         headers.pop("host", None)
         headers.pop("content-length", None)
         
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.request(
-                method=request.method,
-                url=target_url,
-                headers=headers,
-                content=body,
-                params=request.query_params
-            )
-        
-        return JSONResponse(
-            status_code=response.status_code,
-            content=response.json() if response.headers.get("content-type", "").startswith("application/json") else {"message": response.text[:100]}
+        response = requests.request(
+            method=request.method,
+            url=target_url,
+            headers=headers,
+            data=body,
+            params=dict(request.query_params),
+            timeout=30
         )
         
+        try:
+            return JSONResponse(
+                status_code=response.status_code,
+                content=response.json() if response.headers.get("content-type", "").startswith("application/json") else {"message": response.text[:100]}
+            )
+        except:
+            return JSONResponse(
+                status_code=response.status_code,
+                content={"message": response.text[:100]}
+            )
+        
     except Exception as e:
+        logger.error(f"Proxy error: {e}")
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 if __name__ == "__main__":
