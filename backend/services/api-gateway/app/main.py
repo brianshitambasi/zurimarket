@@ -2,7 +2,7 @@
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-import requests
+import httpx
 import logging
 import os
 from datetime import datetime
@@ -20,6 +20,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Service URLs
 SERVICES = {
     "auth": os.getenv("AUTH_SERVICE", "https://zurimarket-auth.onrender.com"),
     "product": os.getenv("PRODUCT_SERVICE", "https://zurimarket-product.onrender.com"),
@@ -33,10 +34,10 @@ SERVICES = {
 
 @app.get("/")
 def root():
-    return {"service": "ZuriMarket API Gateway", "services": list(SERVICES.keys())}
+    return {"service": "ZuriMarket API Gateway", "services": list(SERVICES.keys()), "status": "running"}
 
 @app.get("/health")
-def health():
+async def health():
     return {"status": "healthy", "service": "api-gateway", "timestamp": datetime.utcnow().isoformat()}
 
 @app.api_route("/{service_name}/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
@@ -44,7 +45,7 @@ async def proxy(request: Request, service_name: str, path: str):
     if service_name not in SERVICES:
         return JSONResponse(
             status_code=404,
-            content={"error": f"Service '{service_name}' not found. Available: {list(SERVICES.keys())}"}
+            content={"error": f"Service '{service_name}' not found"}
         )
     
     service_url = SERVICES[service_name]
@@ -59,29 +60,23 @@ async def proxy(request: Request, service_name: str, path: str):
         headers.pop("host", None)
         headers.pop("content-length", None)
         
-        response = requests.request(
-            method=request.method,
-            url=target_url,
-            headers=headers,
-            data=body,
-            params=dict(request.query_params),
-            timeout=30
-        )
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.request(
+                method=request.method,
+                url=target_url,
+                headers=headers,
+                content=body,
+                params=request.query_params
+            )
         
         logger.info(f"Response: {response.status_code}")
         
-        try:
-            return JSONResponse(
-                status_code=response.status_code,
-                content=response.json() if response.headers.get("content-type", "").startswith("application/json") else {"message": response.text[:100]}
-            )
-        except:
-            return JSONResponse(
-                status_code=response.status_code,
-                content={"message": response.text[:100]}
-            )
+        return JSONResponse(
+            status_code=response.status_code,
+            content=response.json() if response.headers.get("content-type", "").startswith("application/json") else {"message": response.text[:100]}
+        )
         
-    except requests.exceptions.Timeout:
+    except httpx.TimeoutException:
         return JSONResponse(status_code=504, content={"error": "Service timeout"})
     except Exception as e:
         logger.error(f"Proxy error: {e}")
