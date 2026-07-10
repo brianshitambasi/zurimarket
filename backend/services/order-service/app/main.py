@@ -141,3 +141,4 @@ def get_orders(user_id: Optional[str] = None):
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8002)
+# Force redeploy Fri, Jul 10, 2026  8:44:19 PM
