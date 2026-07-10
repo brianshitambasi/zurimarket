@@ -20,7 +20,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Service URLs
 SERVICES = {
     "auth": os.getenv("AUTH_SERVICE", "https://zurimarket-auth.onrender.com"),
     "product": os.getenv("PRODUCT_SERVICE", "https://zurimarket-product.onrender.com"),
@@ -51,6 +50,8 @@ async def proxy(request: Request, service_name: str, path: str):
     service_url = SERVICES[service_name]
     target_url = f"{service_url}/{path}"
     
+    logger.info(f"Proxying: {request.method} {target_url}")
+    
     try:
         body = await request.body() if request.method in ["POST", "PUT", "PATCH"] else None
         
@@ -67,7 +68,7 @@ async def proxy(request: Request, service_name: str, path: str):
             timeout=30
         )
         
-        logger.info(f"OK {request.method} {target_url} -> {response.status_code}")
+        logger.info(f"Response: {response.status_code}")
         
         try:
             return JSONResponse(
@@ -83,6 +84,7 @@ async def proxy(request: Request, service_name: str, path: str):
     except requests.exceptions.Timeout:
         return JSONResponse(status_code=504, content={"error": "Service timeout"})
     except Exception as e:
+        logger.error(f"Proxy error: {e}")
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 if __name__ == "__main__":
