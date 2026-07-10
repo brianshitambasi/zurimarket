@@ -98,3 +98,4 @@ async def catch_all(request: Request, path: str):
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8080)
+# Force redeploy Fri, Jul 10, 2026  7:54:25 PM
