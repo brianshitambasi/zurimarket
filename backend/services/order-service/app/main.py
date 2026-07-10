@@ -1,10 +1,14 @@
-from fastapi import FastAPI, HTTPException, status, Depends
+# -*- coding: utf-8 -*-
+from fastapi import FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict
 import uuid
 from datetime import datetime
 import logging
+import json
+import sqlite3
+import os
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -19,10 +23,45 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# In-memory database
-orders_db = []
+# ============ Database ============
+def get_db_connection():
+    conn = sqlite3.connect('zurimarket.db')
+    conn.row_factory = sqlite3.Row
+    return conn
 
-# Models
+def init_db():
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS orders (
+                id TEXT PRIMARY KEY,
+                order_number TEXT UNIQUE NOT NULL,
+                user_id TEXT NOT NULL,
+                items TEXT NOT NULL,
+                subtotal REAL NOT NULL,
+                shipping_fee REAL DEFAULT 0,
+                tax REAL DEFAULT 0,
+                total_amount REAL NOT NULL,
+                status TEXT DEFAULT 'pending',
+                payment_status TEXT DEFAULT 'pending',
+                shipping_address TEXT NOT NULL,
+                payment_method TEXT NOT NULL,
+                tracking_number TEXT,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        conn.commit()
+        cur.close()
+        conn.close()
+        logger.info("SQLite tables created/verified")
+    except Exception as e:
+        logger.error(f"Database init error: {e}")
+
+init_db()
+
+# ============ Models ============
 class OrderItem(BaseModel):
     product_id: str
     product_name: str
@@ -34,101 +73,152 @@ class OrderCreate(BaseModel):
     user_id: str
     items: List[OrderItem]
     shipping_address: Dict[str, str]
-    payment_method: str  # mpesa, card, cash
+    payment_method: str
 
 class OrderUpdate(BaseModel):
     status: Optional[str] = None
     tracking_number: Optional[str] = None
 
-class OrderResponse(BaseModel):
-    id: str = Field(alias="_id")
-    order_number: str
-    user_id: str
-    items: List[OrderItem]
-    subtotal: float
-    shipping_fee: float
-    tax: float
-    total_amount: float
-    status: str  # pending, confirmed, shipped, delivered, cancelled
-    shipping_address: Dict[str, str]
-    payment_method: str
-    payment_status: str  # pending, paid, failed
-    tracking_number: Optional[str] = None
-    created_at: datetime
-    updated_at: datetime
-
-# Helper
+# ============ Helper ============
 def generate_order_number() -> str:
     return f"ORD-{datetime.utcnow().strftime('%Y%m%d')}-{str(uuid.uuid4())[:8].upper()}"
 
+# ============ Routes ============
 @app.get("/")
 def root():
-    return {"service": "Order Service", "status": "running"}
+    return {"service": "Order Service", "database": "sqlite", "status": "running"}
 
 @app.get("/health")
 def health():
-    return {"status": "healthy", "service": "order-service", "timestamp": datetime.utcnow().isoformat()}
+    return {
+        "status": "healthy",
+        "service": "order-service",
+        "database": "sqlite",
+        "timestamp": datetime.utcnow().isoformat()
+    }
 
-@app.post("/api/orders", response_model=OrderResponse)
+@app.post("/api/orders")
 def create_order(order: OrderCreate):
     logger.info(f"Creating order for user: {order.user_id}")
     
-    # Calculate totals
-    subtotal = sum(item.total_price for item in order.items)
-    shipping_fee = 0 if subtotal > 50000 else 500  # Free shipping over 50,000 KES
-    tax = subtotal * 0.16  # 16% VAT
-    total = subtotal + shipping_fee + tax
-    
-    order_dict = order.dict()
-    order_dict["_id"] = str(uuid.uuid4())
-    order_dict["order_number"] = generate_order_number()
-    order_dict["subtotal"] = subtotal
-    order_dict["shipping_fee"] = shipping_fee
-    order_dict["tax"] = tax
-    order_dict["total_amount"] = total
-    order_dict["status"] = "pending"
-    order_dict["payment_status"] = "pending"
-    order_dict["tracking_number"] = None
-    order_dict["created_at"] = datetime.utcnow()
-    order_dict["updated_at"] = datetime.utcnow()
-    
-    orders_db.append(order_dict)
-    logger.info(f"Order created: {order_dict['order_number']}")
-    
-    return order_dict
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        
+        subtotal = sum(item.total_price for item in order.items)
+        shipping_fee = 0 if subtotal > 50000 else 500
+        tax = subtotal * 0.16
+        total = subtotal + shipping_fee + tax
+        
+        order_id = str(uuid.uuid4())
+        order_number = generate_order_number()
+        
+        items_json = json.dumps([item.dict() for item in order.items])
+        shipping_json = json.dumps(order.shipping_address)
+        
+        cur.execute("""
+            INSERT INTO orders (
+                id, order_number, user_id, items, subtotal, shipping_fee, tax,
+                total_amount, shipping_address, payment_method
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            order_id, order_number, order.user_id,
+            items_json,
+            subtotal, shipping_fee, tax, total,
+            shipping_json,
+            order.payment_method
+        ))
+        
+        conn.commit()
+        cur.close()
+        conn.close()
+        
+        logger.info(f"Order created: {order_number}")
+        
+        return {
+            "id": order_id,
+            "order_number": order_number,
+            "user_id": order.user_id,
+            "items": [item.dict() for item in order.items],
+            "subtotal": subtotal,
+            "shipping_fee": shipping_fee,
+            "tax": tax,
+            "total_amount": total,
+            "status": "pending",
+            "payment_status": "pending",
+            "shipping_address": order.shipping_address,
+            "payment_method": order.payment_method,
+            "created_at": datetime.utcnow().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"Order creation error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/orders")
 def get_orders(user_id: Optional[str] = None):
-    if user_id:
-        return [o for o in orders_db if o.get("user_id") == user_id]
-    return orders_db
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        
+        if user_id:
+            cur.execute("SELECT * FROM orders WHERE user_id = ? ORDER BY created_at DESC", (user_id,))
+        else:
+            cur.execute("SELECT * FROM orders ORDER BY created_at DESC")
+        
+        orders = cur.fetchall()
+        cur.close()
+        conn.close()
+        
+        result = []
+        for order in orders:
+            order_dict = dict(order)
+            try:
+                order_dict["items"] = json.loads(order_dict["items"])
+            except:
+                pass
+            try:
+                order_dict["shipping_address"] = json.loads(order_dict["shipping_address"])
+            except:
+                pass
+            result.append(order_dict)
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"Get orders error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/orders/{order_id}")
 def get_order(order_id: str):
-    for order in orders_db:
-        if order.get("_id") == order_id:
-            return order
-    raise HTTPException(status_code=404, detail="Order not found")
-
-@app.put("/api/orders/{order_id}")
-def update_order(order_id: str, order_update: OrderUpdate):
-    for order in orders_db:
-        if order.get("_id") == order_id:
-            update_data = order_update.dict(exclude_unset=True)
-            order.update(update_data)
-            order["updated_at"] = datetime.utcnow()
-            return order
-    raise HTTPException(status_code=404, detail="Order not found")
-
-@app.delete("/api/orders/{order_id}")
-def delete_order(order_id: str):
-    for i, order in enumerate(orders_db):
-        if order.get("_id") == order_id:
-            if order.get("status") in ["shipped", "delivered"]:
-                raise HTTPException(status_code=400, detail="Cannot delete shipped order")
-            orders_db.pop(i)
-            return {"message": "Order cancelled"}
-    raise HTTPException(status_code=404, detail="Order not found")
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM orders WHERE id = ?", (order_id,))
+        order = cur.fetchone()
+        cur.close()
+        conn.close()
+        
+        if not order:
+            raise HTTPException(status_code=404, detail="Order not found")
+        
+        order_dict = dict(order)
+        try:
+            order_dict["items"] = json.loads(order_dict["items"])
+        except:
+            pass
+        try:
+            order_dict["shipping_address"] = json.loads(order_dict["shipping_address"])
+        except:
+            pass
+        
+        return order_dict
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Get order error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
     import uvicorn
